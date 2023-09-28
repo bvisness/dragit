@@ -138,15 +138,39 @@ void work() {
                               oc_str8_push_copy(&appArena, it->string));
           }
         }
-        oc_log_info("commit has %d parents\n", commit->parents.eltCount);
 
         CommitTableInsert(&commits, commit);
         oc_log_info("stored commit:\n");
         log_commit(commit);
       }
     }
-
     oc_log_info("stored %d commits\n", commits.count);
+
+    // ok...now it's getting real...time to actually fetch things from a hash
+    // map
+    oc_str8 startHash = OC_STR8("976a2e65b526af72959bbddb100c5085102cd1b2");
+    Commit *commit = CommitTableGet(&commits, startHash);
+    int numCommits = 0;
+    while (commit) {
+      log_commit(commit);
+      numCommits += 1;
+
+      if (commit->parents.len == 0) {
+        break;
+      }
+
+      // lmao
+      oc_str8 firstParentHash =
+          oc_list_checked_entry(oc_list_begin(commit->parents.list),
+                                oc_str8_elt, listElt)
+              ->string;
+      oc_log_info("commit's parent is: %.*s\n",
+                  oc_str8_printf(firstParentHash));
+      commit = CommitTableGet(&commits, firstParentHash);
+    }
+
+    oc_log_info("found %d commits\n", numCommits);
+
     nextAppState = ACTIVE;
   } break;
   default:

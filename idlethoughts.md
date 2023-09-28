@@ -9,3 +9,4 @@
 - Do our arenas give us zeroed memory or not? It would be really nice for them to give us zeroed memory, please. At least in debug.
 - It looks like oc_str8_split doesn't correctly handle consecutive separators - we should get empty strings between them, but we don't.
     - lmao martin explicitly suppressed empty strings. don't do that!!
+- It's really hard to work with lists. Really hard. How do I just get the first element of a list? I just want the first string or whatever!

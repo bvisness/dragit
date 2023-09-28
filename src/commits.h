@@ -4,7 +4,7 @@
 #include "util/strings.h"
 #include <orca.h>
 
-#define HASH_NUM_BUCKETS 32
+#define HASH_NUM_BUCKETS 512
 
 u32 murmur3_str8(oc_str8 str);
 
