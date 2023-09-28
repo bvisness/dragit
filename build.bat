@@ -18,7 +18,7 @@ set wasmFlags=--target=wasm32^
        -I%ORCA_DIR%\src ^
        -I%ORCA_DIR%\src\ext
 
-clang -MJdorp.json %wasmFlags% -o .\build\module.wasm %ORCA_DIR%\src\orca.c %STDLIB_DIR%\src\*.c src\main.c
+clang %wasmFlags% -o .\build\module.wasm %ORCA_DIR%\src\orca.c %STDLIB_DIR%\src\*.c src\main.c
 if !ERRORLEVEL! neq 0 exit /b !ERRORLEVEL!
 
 orca bundle --orca-dir %ORCA_DIR% --name Dragit --resource-dir data --out-dir build build\module.wasm
