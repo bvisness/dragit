@@ -5,8 +5,11 @@
 #include "graphics/graphics.h"
 #include "platform/platform_subprocess.h"
 #include "util/debug.h"
+#include "util/lists.h"
 #include "util/memory.h"
 #include "util/strings.h"
+
+#include "commits.h"
 
 oc_surface surface;
 oc_canvas canvas;
@@ -26,7 +29,10 @@ typedef enum AppState {
 AppState appState;
 AppState nextAppState;
 
-oc_str8_list linebreaks = {0};
+CommitTable commits;
+
+oc_str8_list newlines = {0};
+oc_str8_list spaces = {0};
 
 f32 lerp(f32 a, f32 b, f32 t) { return (1 - t) * a + t * b; }
 
@@ -46,7 +52,10 @@ ORCA_EXPORT void oc_on_init(void) {
   oc_arena_init(&appArena);
   oc_arena_init(&frameArena);
 
-  oc_str8_list_push(&appArena, &linebreaks, OC_STR8("\n"));
+  oc_str8_list_push(&appArena, &newlines, OC_STR8("\n"));
+  oc_str8_list_push(&appArena, &spaces, OC_STR8(" "));
+
+  CommitTableInit(&commits);
 }
 
 f32 fontSize = 18.0f;
@@ -86,44 +95,58 @@ void work() {
   } break;
   case LOADING: {
     oc_str8 allCommits = oc_run_cmd(
-        &frameArena, OC_STR8("git log \"--format=%H%n%ct%n%an%n%s\""));
-    oc_str8_list commitLines =
-        oc_str8_split(&frameArena, allCommits, linebreaks);
-    oc_log_info("total output length: %d. num lines: %d\n", allCommits.len,
-                commitLines.eltCount);
+        &frameArena, OC_STR8("git log --all \"--format=%H%n%an%n%P%n%s\""));
+    oc_str8_list commitLines = oc_str8_split(&frameArena, allCommits, newlines);
 
     oc_str8 hash;
-    oc_str8 timestamp;
     oc_str8 authorName;
+    oc_str8 parentHashesStr;
     oc_str8 summary;
     int numParts = 4;
+
     int i = 0;
     oc_str8_list_for(commitLines, it) {
       switch (i % numParts) {
-      case 0:
+      case 0: {
         hash = it->string;
-        break;
-      case 1:
-        timestamp = it->string;
-        break;
-      case 2:
+      } break;
+      case 1: {
         authorName = it->string;
-        break;
-      case 3:
+      } break;
+      case 2: {
+        parentHashesStr = it->string;
+      } break;
+      case 3: {
         summary = it->string;
-        break;
+      } break;
       }
       i = (i + 1) % numParts;
 
       if (i == 0) {
-        // Finished a commit, store it somewhere or whatever
-        oc_log_info("hash: %.*s\n", oc_str8_printf(hash));
-        oc_log_info("timestamp: %.*s\n", oc_str8_printf(timestamp));
-        oc_log_info("authorName: %.*s\n", oc_str8_printf(authorName));
-        oc_log_info("summary: %.*s\n", oc_str8_printf(summary));
+        // Finished a commit, store it
+        Commit *commit = oc_arena_push_type(&appArena, Commit);
+        memset(commit, 0, sizeof(Commit));
+        commit->hash = oc_str8_push_copy(&appArena, hash);
+        commit->authorName = oc_str8_push_copy(&appArena, authorName);
+        commit->summary = oc_str8_push_copy(&appArena, summary);
+
+        oc_str8_list parentHashes =
+            oc_str8_split(scratch.arena, parentHashesStr, spaces);
+        oc_str8_list_for(parentHashes, it) {
+          if (it->string.len > 0) {
+            oc_str8_list_push(&appArena, &commit->parents,
+                              oc_str8_push_copy(&appArena, it->string));
+          }
+        }
+        oc_log_info("commit has %d parents\n", commit->parents.eltCount);
+
+        CommitTableInsert(&commits, commit);
+        oc_log_info("stored commit:\n");
+        log_commit(commit);
       }
     }
-    oc_log_info("ok no more commits");
+
+    oc_log_info("stored %d commits\n", commits.count);
     nextAppState = ACTIVE;
   } break;
   default:

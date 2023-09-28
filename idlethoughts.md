@@ -3,3 +3,9 @@
 - The oc_log functions shouldn't require newlines at the end. That's weird.
 - WOW iterating over string lists is painful. Wow wow wow.
 - Weird that you have to init lists but not string lists.
+    - Seems like the init function is there, but not exposed for some reason.
+- When splitting a string, it would be nice to know exactly what lifetime the resulting strings are on. My hunch would be that it would obviously not copy the strings, it would just be slicing the original string and therefore not allocating for those - but it needs an arena to allocate the list nodes on. Still, it would be nice to be sure.
+    - This is indeed how it works.
+- Do our arenas give us zeroed memory or not? It would be really nice for them to give us zeroed memory, please. At least in debug.
+- It looks like oc_str8_split doesn't correctly handle consecutive separators - we should get empty strings between them, but we don't.
+    - lmao martin explicitly suppressed empty strings. don't do that!!
