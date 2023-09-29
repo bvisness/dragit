@@ -34,6 +34,9 @@ AppState nextAppState;
 
 CommitTable commits;
 NodeList nodes;
+Node *rootNode;
+
+bool needLayout = false;
 
 oc_str8_list newlines = {0};
 oc_str8_list spaces = {0};
@@ -65,11 +68,18 @@ ORCA_EXPORT void oc_on_init(void) {
 f32 scroll = 0;
 f32 actualScroll = 0;
 
+bool mouseDown;
+bool mousePressed;
 oc_vec2 mousePos;
 
-// ORCA_EXPORT void oc_on_mouse_down(oc_mouse_button button) { dragging = true;
-// } ORCA_EXPORT void oc_on_mouse_up(oc_mouse_button button) { dragging = false;
-// }
+ORCA_EXPORT void oc_on_mouse_down(oc_mouse_button button) {
+  mouseDown = true;
+  mousePressed = true;
+}
+ORCA_EXPORT void oc_on_mouse_up(oc_mouse_button button) {
+  mouseDown = false;
+  mousePressed = false;
+}
 ORCA_EXPORT void oc_on_mouse_move(f32 x, f32 y, f32 deltaX, f32 deltaY) {
   mousePos = (oc_vec2){x, y};
 }
@@ -78,10 +88,17 @@ ORCA_EXPORT void oc_on_mouse_wheel(f32 deltaX, f32 deltaY) { scroll -= deltaY; }
 ORCA_EXPORT void oc_on_frame_refresh(void) {
   oc_arena_clear(&frameArena);
 
+  needLayout = false;
+
   work();
   draw();
 
+  if (needLayout) {
+    layoutNodes(&frameArena, &nodes, &commits, rootNode, false);
+  }
+
   appState = nextAppState;
+  mousePressed = false;
 }
 
 void work() {
@@ -162,7 +179,7 @@ void work() {
     //
     // Also save the root node; we will be using it for layout.
     oc_log_info("saving child hashes for all commits");
-    Node *root = NULL;
+    rootNode = NULL;
     for (int i = 0; i < nodes.count; i++) {
       Node *node = &nodes.nodes[i];
       oc_str8_list_for(node->commit->parents, parentHash) {
@@ -170,19 +187,14 @@ void work() {
         oc_str8_list_push(commits.arena, &parent->children, node->commit->hash);
       }
       if (node->commit->parents.eltCount == 0) {
-        OC_ASSERT(!root,
+        OC_ASSERT(!rootNode,
                   "do not run this on repos with more than one root commit");
-        root = node;
+        rootNode = node;
       }
     }
-    OC_ASSERT(root);
+    OC_ASSERT(rootNode);
 
-    // Starting from the root, compute "depths" for all nodes.
-    oc_log_info("computing node depths\n");
-    computeNodeDepths(&commits, root, NULL);
-
-    oc_log_info("adjusting node tracks\n");
-    fixupTracks(&frameArena, &commits, root);
+    layoutNodes(&frameArena, &nodes, &commits, rootNode, true);
 
     nextAppState = ACTIVE;
   } break;
@@ -196,12 +208,15 @@ void work() {
   oc_scratch_end(scratch);
 }
 
+oc_color colorBg = (oc_color){0.95f, 0.95f, 0.95f, 1};
+oc_color colorFg = (oc_color){0, 0, 0, 1};
+
 void draw() {
   oc_arena_scope scratch = oc_scratch_begin();
 
   oc_canvas_select(canvas);
 
-  oc_set_color_rgba(0.95f, 0.95f, 0.95f, 1);
+  oc_set_color(colorBg);
   oc_clear();
 
   oc_set_font(font);
@@ -229,10 +244,6 @@ void draw() {
       Node *node = &nodes.nodes[i];
       node->targetX = (node->track + 1) * 30;
       node->targetY = (maxDepth - node->depth + 1) * 30;
-      if (node->y - 10 <= mousePosScrolled.y &&
-          mousePosScrolled.y <= node->y + 10) {
-        node->targetX += 20;
-      }
     }
 
     for (int i = 0; i < nodes.count; i++) {
@@ -256,17 +267,34 @@ void draw() {
         }
 
         if (node->omitted) {
-          continue;
+          f32 r = 8;
+
+          oc_set_color(colorBg);
+          oc_circle_fill(node->x, node->y, r);
+          oc_set_color(colorFg);
+          oc_set_width(2);
+          oc_circle_stroke(node->x, node->y, r);
+          oc_circle_fill(node->x - 3, node->y, 1);
+          oc_circle_fill(node->x + 0, node->y, 1);
+          oc_circle_fill(node->x + 3, node->y, 1);
+
+          if (mousePressed && node->x - r <= mousePosScrolled.x &&
+              mousePosScrolled.x <= node->x + r &&
+              node->y - r <= mousePosScrolled.y &&
+              mousePosScrolled.y <= node->y + r) {
+            node->omitted = false;
+            needLayout = true;
+          }
+        } else {
+          oc_set_color(colorFg);
+          oc_circle_fill(node->x, node->y, 5);
+
+          f32 fontSize = 18;
+          oc_move_to(node->x + 15, node->y + fontSize / 2 - 3); // dunno
+          oc_set_font_size(fontSize);
+          oc_text_outlines(node->commit->summary);
+          oc_fill();
         }
-
-        oc_set_color_rgba(0, 0, 0, 1);
-        oc_circle_fill(node->x, node->y, 5);
-
-        f32 fontSize = 18;
-        oc_move_to(node->x + 15, node->y + fontSize / 2 - 3); // dunno
-        oc_set_font_size(fontSize);
-        oc_text_outlines(node->commit->summary);
-        oc_fill();
       }
     }
     oc_matrix_pop();

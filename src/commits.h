@@ -130,6 +130,7 @@ typedef struct Node {
   // 1 is the minimum!! 0 means unknown.
   i32 depth;
   i32 track; // bigger = further right
+  i32 trackOffsetFromParent;
   bool omitted;
 
   // Computed layout values
@@ -198,18 +199,6 @@ Node *NodeQueueRemove(NodeQueue *queue, i32 i) {
   return node;
 }
 
-void setNodeTrack(CommitTable *commits, Node *node, i32 track) {
-  if (node->track) {
-    return;
-  }
-
-  node->track = track;
-  oc_str8_list_for(node->commit->parents, parentHash) {
-    Commit *parent = CommitTableGet(commits, parentHash->string);
-    setNodeTrack(commits, parent->node, track);
-  }
-}
-
 // Desired outcome:
 // - Root node is depth 1
 // - Recurse to all node children.
@@ -217,7 +206,8 @@ void setNodeTrack(CommitTable *commits, Node *node, i32 track) {
 //    - Except, if the commit participated in a merge, it should not be omitted.
 // - Runs of omitted commits have the same depth.
 // - Every commit has depth > all its parents.
-void computeNodeDepths(CommitTable *commits, Node *node, Node *parent) {
+void computeNodeDepths(CommitTable *commits, Node *node, Node *parent,
+                       bool setOmitted) {
   bool isBoring = node->commit->parents.eltCount == 1 &&
                   node->commit->children.eltCount == 1;
   bool isMerged = false;
@@ -228,7 +218,9 @@ void computeNodeDepths(CommitTable *commits, Node *node, Node *parent) {
       isMerged = true;
     }
   }
-  node->omitted = isBoring && !isMerged;
+  if (setOmitted) {
+    node->omitted = isBoring && !isMerged;
+  }
 
   i32 newDepth = 1;
   if (parent) {
@@ -243,7 +235,7 @@ void computeNodeDepths(CommitTable *commits, Node *node, Node *parent) {
 
   oc_str8_list_for(node->commit->children, childHash) {
     Commit *child = CommitTableGet(commits, childHash->string);
-    computeNodeDepths(commits, child->node, node);
+    computeNodeDepths(commits, child->node, node, setOmitted);
   }
 }
 
@@ -251,6 +243,7 @@ void computeNodeDepths(CommitTable *commits, Node *node, Node *parent) {
 // that nodes do not overlap.
 void fixupTracks(oc_arena *arena, CommitTable *commits, Node *root) {
   NodeQueue *queue = oc_arena_push_type(arena, NodeQueue);
+  NodeQueueInit(queue);
   NodeQueuePush(queue, root);
 
   int currentDepth = root->depth;
@@ -267,32 +260,24 @@ void fixupTracks(oc_arena *arena, CommitTable *commits, Node *root) {
       Node *node = queue->nodes[i];
       OC_ASSERT(node->depth >= currentDepth);
 
+      // First move each node to the minimum of its parents' tracks
+      i32 minParentTrack = node == root ? 0 : 999;
+      oc_str8_list_for(node->commit->parents, parentHash) {
+        Node *parent = CommitTableGet(commits, parentHash->string)->node;
+        minParentTrack = oc_min_i32(minParentTrack, parent->track);
+      }
+      node->track = minParentTrack + node->trackOffsetFromParent;
+
       i32 trackAdjust = 0;
       if (node->depth == currentDepth) {
         // Iterate through commit's children and adjust each "set" of commits
         // horizontally. A "set" is a run of boring commits followed by an
         // interesting commit. (Typically there are no boring commits.)
         oc_str8_list_for(node->commit->children, childHash) {
-          oc_str8 nextHash = childHash->string;
-          while (true) {
-            Node *child = CommitTableGet(commits, nextHash)->node;
-            child->track += trackAdjust;
-            if (child->omitted) {
-              // boring; proceed to its child
-              oc_str8_list_for(child->commit->children, it) {
-                nextHash = it->string;
-                break;
-              }
-              continue;
-            } else {
-              NodeQueuePush(queue, child);
-              break;
-            }
-
-            OC_ASSERT("u dumb");
-          }
-
+          Node *child = CommitTableGet(commits, childHash->string)->node;
+          child->trackOffsetFromParent = trackAdjust;
           trackAdjust += 1;
+          NodeQueuePush(queue, child);
         }
 
         NodeQueueRemove(queue, i);
@@ -302,4 +287,16 @@ void fixupTracks(oc_arena *arena, CommitTable *commits, Node *root) {
 
     currentDepth += 1;
   }
+}
+
+void layoutNodes(oc_arena *arena, NodeList *nodes, CommitTable *commits,
+                 Node *root, bool setOmitted) {
+  for (int i = 0; i < nodes->count; i++) {
+    Node *node = &nodes->nodes[i];
+    node->track = 0;
+  }
+  oc_log_info("computing node depths\n");
+  computeNodeDepths(commits, root, NULL, setOmitted);
+  oc_log_info("adjusting node tracks\n");
+  fixupTracks(arena, commits, root);
 }
