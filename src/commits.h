@@ -12,18 +12,16 @@ typedef struct Commit {
   oc_str8 hash;
   oc_str8 authorName;
   oc_str8 summary;
-  oc_str8_list parents; // parent hashes
+  oc_str8_list parents;
+  oc_str8_list children;
 
-  // bigger = farther from root = higher up.
-  // 1 is the minimum!! 0 means unknown.
-  i32 depth;
-  i32 track; // bigger = further right
-  bool hasChildren;
+  struct Node *node;
 
   struct Commit *_hashNext;
 } Commit;
 
 typedef struct CommitTable {
+  oc_arena *arena;
   Commit *buckets[HASH_NUM_BUCKETS];
   i32 count;
 } CommitTable;
@@ -33,8 +31,9 @@ typedef struct CommitListElem {
   Commit *commit;
 } CommitListElem;
 
-void CommitTableInit(CommitTable *tab) {
+void CommitTableInit(oc_arena *arena, CommitTable *tab) {
   memset(&tab->buckets, 0, sizeof(tab->buckets));
+  tab->arena = arena;
 }
 
 void CommitTableInsert(CommitTable *tab, Commit *commit) {
@@ -119,30 +118,88 @@ void log_commit(Commit *commit) {
               oc_str8_printf(commit->summary));
 }
 
-void initCommitMetadata(CommitTable *commits, Commit *commit, bool fromChild) {
-  if (fromChild) {
-    commit->hasChildren = true;
-  }
+// Easily enough for a demo without ever needing to grow.
+#define SCRATCH_NODES 100
 
-  if (!commit->depth) {
-    i32 depth = 1;
-    oc_str8_list_for(commit->parents, parentHash) {
-      Commit *parent = CommitTableGet(commits, parentHash->string);
-      initCommitMetadata(commits, parent, true);
-      depth = oc_max_i32(depth, parent->depth + 1);
-    }
-    commit->depth = depth;
-  }
+typedef struct Node {
+  Commit *commit;
+
+  // bigger = farther from root = higher up.
+  // 1 is the minimum!! 0 means unknown.
+  i32 depth;
+  i32 track; // bigger = further right
+  bool omitted;
+} Node;
+
+typedef struct NodeList {
+  Node *nodes;
+  i32 count;
+  i32 cap;
+} NodeList;
+
+void NodeListInit(oc_arena *arena, NodeList *list, i32 size) {
+  i32 cap = size + SCRATCH_NODES;
+  *list = (NodeList){
+      .nodes = oc_arena_push_array(arena, Node, cap),
+      .count = 0,
+      .cap = cap,
+  };
 }
 
-void setCommitTrack(CommitTable *commits, Commit *commit, i32 track) {
-  if (commit->track) {
+Node *NodeListPush(NodeList *list, Node node) {
+  i32 i = list->count;
+  list->nodes[i] = node;
+  list->count += 1;
+  return &list->nodes[i];
+};
+
+void NodeListDelete(NodeList *list, i32 i) { list->nodes[i] = (Node){0}; }
+
+void setNodeTrack(CommitTable *commits, Node *node, i32 track) {
+  if (node->track) {
     return;
   }
 
-  commit->track = track;
-  oc_str8_list_for(commit->parents, parentHash) {
+  node->track = track;
+  oc_str8_list_for(node->commit->parents, parentHash) {
     Commit *parent = CommitTableGet(commits, parentHash->string);
-    setCommitTrack(commits, parent, track);
+    setNodeTrack(commits, parent->node, track);
+  }
+}
+
+// Desired outcome:
+// - Root node is depth 1
+// - Recurse to all node children.
+// - If a commit has one child and one parent, omit it from the graph.
+//    - Except, if the commit participated in a merge, it should not be omitted.
+// - Runs of omitted commits have the same depth.
+// - Every commit has depth > all its parents.
+void computeNodeDepths(CommitTable *commits, Node *node, Node *parent) {
+  bool isBoring = node->commit->parents.eltCount == 1 &&
+                  node->commit->children.eltCount == 1;
+  bool isMerged = false;
+  oc_str8_list_for(node->commit->children, childHash) {
+    Commit *child = CommitTableGet(commits, childHash->string);
+    if (child->parents.eltCount > 1) {
+      // Child is merge commit, therefore this commit was merged into it!
+      isMerged = true;
+    }
+  }
+  node->omitted = isBoring && !isMerged;
+
+  i32 newDepth = 1;
+  if (parent) {
+    newDepth =
+        (parent->omitted && node->omitted) ? parent->depth : parent->depth + 1;
+  }
+  node->depth = oc_max_i32(node->depth, newDepth);
+
+  // TODO: Doing this depth-first is really runaway
+  // expensive in the face of lots of merging and joining. A
+  // breadth-first traversal would be dramatically cheaper.
+
+  oc_str8_list_for(node->commit->children, childHash) {
+    Commit *child = CommitTableGet(commits, childHash->string);
+    computeNodeDepths(commits, child->node, node);
   }
 }

@@ -12,7 +12,6 @@
 #include "util/strings.h"
 
 #include "commits.h"
-#include "graph.h"
 
 oc_surface surface;
 oc_canvas canvas;
@@ -59,7 +58,7 @@ ORCA_EXPORT void oc_on_init(void) {
   oc_str8_list_push(&appArena, &newlines, OC_STR8("\n"));
   oc_str8_list_push(&appArena, &spaces, OC_STR8(" "));
 
-  CommitTableInit(&commits);
+  CommitTableInit(&appArena, &commits);
 }
 
 f32 scroll = 0;
@@ -145,42 +144,55 @@ void work() {
     }
     oc_log_info("stored %d commits\n", commits.count);
 
-    // First compute depths for all commits
-    oc_log_info("computing commit metadata (depth + tracks)\n");
-    for (i32 b = 0; b < HASH_NUM_BUCKETS; b++) {
-      for (Commit *commit = commits.buckets[b]; commit != NULL;
-           commit = commit->_hashNext) {
-        initCommitMetadata(&commits, commit, false);
-      }
-    }
-
-    // Now sort them into tracks by leaf commits
-    // wow I love looping over my "hash table" like this it's so good
-    oc_log_info("sorting commits into tracks\n");
-    int currentTrack = 0;
-    for (i32 b = 0; b < HASH_NUM_BUCKETS; b++) {
-      for (Commit *commit = commits.buckets[b]; commit != NULL;
-           commit = commit->_hashNext) {
-        if (commit->hasChildren) {
-          continue;
-        }
-
-        currentTrack += 1;
-        setCommitTrack(&commits, commit, currentTrack);
-      }
-    }
-
-    // Now create graph nodes for each?? I guess??
+    // Create graph nodes for each commit
     oc_log_info("creating graph nodes\n");
     NodeListInit(&appArena, &nodes, commits.count);
     for (i32 b = 0; b < HASH_NUM_BUCKETS; b++) {
       for (Commit *commit = commits.buckets[b]; commit != NULL;
            commit = commit->_hashNext) {
-        NodeListPush(&nodes, (Node){
-                                 .commit = commit,
-                             });
+        Node *listNode = NodeListPush(&nodes, (Node){
+                                                  .commit = commit,
+                                              });
+        commit->node = listNode;
       }
     }
+
+    // The raw Git data only tells us parent commits, not child commits. Go
+    // through every commit and add its hash to its parents' lists of children.
+    //
+    // Also save the root node; we will be using it for layout.
+    oc_log_info("saving child hashes for all commits");
+    Node *root = NULL;
+    for (int i = 0; i < nodes.count; i++) {
+      Node *node = &nodes.nodes[i];
+      oc_str8_list_for(node->commit->parents, parentHash) {
+        Commit *parent = CommitTableGet(&commits, parentHash->string);
+        oc_str8_list_push(commits.arena, &parent->children, node->commit->hash);
+      }
+      if (node->commit->parents.eltCount == 0) {
+        OC_ASSERT(!root,
+                  "do not run this on repos with more than one root commit");
+        root = node;
+      }
+    }
+    OC_ASSERT(root);
+
+    // Sort them into tracks by leaf commits
+    oc_log_info("sorting commits into tracks\n");
+    int currentTrack = 0;
+    for (int i = 0; i < nodes.count; i++) {
+      Node *node = &nodes.nodes[i];
+      if (node->commit->children.eltCount > 0) {
+        continue;
+      }
+
+      currentTrack += 1;
+      setNodeTrack(&commits, node, currentTrack);
+    }
+
+    // Starting from the root, compute "depths" for all nodes.
+    oc_log_info("computing node depths\n");
+    computeNodeDepths(&commits, root, NULL);
 
     nextAppState = ACTIVE;
   } break;
@@ -217,16 +229,19 @@ void draw() {
     int maxDepth = 0;
     for (int i = 0; i < nodes.count; i++) {
       Node *node = &nodes.nodes[i];
-      maxDepth = oc_max_i32(maxDepth, node->commit->depth);
+      maxDepth = oc_max_i32(maxDepth, node->depth);
     }
 
     oc_matrix_push(oc_mat2x3_translate(0, actualScroll));
     {
       for (int i = 0; i < nodes.count; i++) {
         Node *node = &nodes.nodes[i];
+        if (node->omitted) {
+          continue;
+        }
 
-        f32 x = node->commit->track * 30;
-        f32 y = (maxDepth - node->commit->depth + 1) * 30;
+        f32 x = node->track * 30;
+        f32 y = (maxDepth - node->depth + 1) * 30;
         oc_set_color_rgba(0, 0, 0, 1);
         oc_circle_fill(x, y, 5);
 
