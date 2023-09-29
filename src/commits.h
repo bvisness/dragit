@@ -14,6 +14,12 @@ typedef struct Commit {
   oc_str8 summary;
   oc_str8_list parents; // parent hashes
 
+  // bigger = farther from root = higher up.
+  // 1 is the minimum!! 0 means unknown.
+  i32 depth;
+  i32 track; // bigger = further right
+  bool hasChildren;
+
   struct Commit *_hashNext;
 } Commit;
 
@@ -111,4 +117,32 @@ void log_commit(Commit *commit) {
   oc_log_info("commit %.*s\n  %.*s\n  %.*s\n", oc_str8_printf(commit->hash),
               oc_str8_printf(commit->authorName),
               oc_str8_printf(commit->summary));
+}
+
+void initCommitMetadata(CommitTable *commits, Commit *commit, bool fromChild) {
+  if (fromChild) {
+    commit->hasChildren = true;
+  }
+
+  if (!commit->depth) {
+    i32 depth = 1;
+    oc_str8_list_for(commit->parents, parentHash) {
+      Commit *parent = CommitTableGet(commits, parentHash->string);
+      initCommitMetadata(commits, parent, true);
+      depth = oc_max_i32(depth, parent->depth + 1);
+    }
+    commit->depth = depth;
+  }
+}
+
+void setCommitTrack(CommitTable *commits, Commit *commit, i32 track) {
+  if (commit->track) {
+    return;
+  }
+
+  commit->track = track;
+  oc_str8_list_for(commit->parents, parentHash) {
+    Commit *parent = CommitTableGet(commits, parentHash->string);
+    setCommitTrack(commits, parent, track);
+  }
 }

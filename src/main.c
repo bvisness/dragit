@@ -3,13 +3,16 @@
 #include "orca_ext.h"
 
 #include "graphics/graphics.h"
+#include "platform/platform_debug.h"
 #include "platform/platform_subprocess.h"
+#include "util/algebra.h"
 #include "util/debug.h"
 #include "util/lists.h"
 #include "util/memory.h"
 #include "util/strings.h"
 
 #include "commits.h"
+#include "graph.h"
 
 oc_surface surface;
 oc_canvas canvas;
@@ -30,6 +33,7 @@ AppState appState;
 AppState nextAppState;
 
 CommitTable commits;
+NodeList nodes;
 
 oc_str8_list newlines = {0};
 oc_str8_list spaces = {0};
@@ -58,24 +62,19 @@ ORCA_EXPORT void oc_on_init(void) {
   CommitTableInit(&commits);
 }
 
-f32 fontSize = 18.0f;
-oc_vec2 pos = {10.0f, 30.0f};
-bool dragging = false;
-f32 rot = 0.0f;
-f32 actualRot = 0.0f;
+f32 scroll = 0;
+f32 actualScroll = 0;
 
-ORCA_EXPORT void oc_on_mouse_down(oc_mouse_button button) { dragging = true; }
-ORCA_EXPORT void oc_on_mouse_up(oc_mouse_button button) { dragging = false; }
-ORCA_EXPORT void oc_on_mouse_move(f32 x, f32 y, f32 deltaX, f32 deltaY) {
-  if (dragging) {
-    pos.x += deltaX;
-    pos.y += deltaY;
-  }
-}
-ORCA_EXPORT void oc_on_mouse_wheel(f32 deltaX, f32 deltaY) {
-  fontSize += -deltaY * 0.1;
-  rot += deltaX * 0.004;
-}
+// ORCA_EXPORT void oc_on_mouse_down(oc_mouse_button button) { dragging = true;
+// } ORCA_EXPORT void oc_on_mouse_up(oc_mouse_button button) { dragging = false;
+// }
+// ORCA_EXPORT void oc_on_mouse_move(f32 x, f32 y, f32 deltaX, f32 deltaY) {
+//   if (dragging) {
+//     pos.x += deltaX;
+//     pos.y += deltaY;
+//   }
+// }
+ORCA_EXPORT void oc_on_mouse_wheel(f32 deltaX, f32 deltaY) { scroll -= deltaY; }
 
 ORCA_EXPORT void oc_on_frame_refresh(void) {
   oc_arena_clear(&frameArena);
@@ -140,38 +139,53 @@ void work() {
         }
 
         CommitTableInsert(&commits, commit);
-        oc_log_info("stored commit:\n");
-        log_commit(commit);
+        // oc_log_info("stored commit:\n");
+        // log_commit(commit);
       }
     }
     oc_log_info("stored %d commits\n", commits.count);
 
-    // ok...now it's getting real...time to actually fetch things from a hash
-    // map
-    oc_str8 startHash = OC_STR8("976a2e65b526af72959bbddb100c5085102cd1b2");
-    Commit *commit = CommitTableGet(&commits, startHash);
-    int numCommits = 0;
-    while (commit) {
-      log_commit(commit);
-      numCommits += 1;
-
-      if (commit->parents.len == 0) {
-        break;
+    // First compute depths for all commits
+    oc_log_info("computing commit metadata (depth + tracks)\n");
+    for (i32 b = 0; b < HASH_NUM_BUCKETS; b++) {
+      for (Commit *commit = commits.buckets[b]; commit != NULL;
+           commit = commit->_hashNext) {
+        initCommitMetadata(&commits, commit, false);
       }
-
-      // lmao
-      oc_str8 firstParentHash =
-          oc_list_checked_entry(oc_list_begin(commit->parents.list),
-                                oc_str8_elt, listElt)
-              ->string;
-      oc_log_info("commit's parent is: %.*s\n",
-                  oc_str8_printf(firstParentHash));
-      commit = CommitTableGet(&commits, firstParentHash);
     }
 
-    oc_log_info("found %d commits\n", numCommits);
+    // Now sort them into tracks by leaf commits
+    // wow I love looping over my "hash table" like this it's so good
+    oc_log_info("sorting commits into tracks\n");
+    int currentTrack = 0;
+    for (i32 b = 0; b < HASH_NUM_BUCKETS; b++) {
+      for (Commit *commit = commits.buckets[b]; commit != NULL;
+           commit = commit->_hashNext) {
+        if (commit->hasChildren) {
+          continue;
+        }
+
+        currentTrack += 1;
+        setCommitTrack(&commits, commit, currentTrack);
+      }
+    }
+
+    // Now create graph nodes for each?? I guess??
+    oc_log_info("creating graph nodes\n");
+    NodeListInit(&appArena, &nodes, commits.count);
+    for (i32 b = 0; b < HASH_NUM_BUCKETS; b++) {
+      for (Commit *commit = commits.buckets[b]; commit != NULL;
+           commit = commit->_hashNext) {
+        NodeListPush(&nodes, (Node){
+                                 .commit = commit,
+                             });
+      }
+    }
 
     nextAppState = ACTIVE;
+  } break;
+  case ACTIVE: {
+    actualScroll = lerp(actualScroll, scroll, 0.2);
   } break;
   default:
     break;
@@ -188,18 +202,42 @@ void draw() {
   oc_set_color_rgba(0.95f, 0.95f, 0.95f, 1);
   oc_clear();
 
-  oc_set_color_rgba(0, 0, 0, 1);
   oc_set_font(font);
-  oc_set_font_size(fontSize);
 
   switch (appState) {
   case INITIAL: {
     oc_set_color_rgba(0, 0, 0, 1);
     oc_set_font(font);
-    oc_set_font_size(fontSize);
+    oc_set_font_size(20);
     oc_move_to(10, 30);
     oc_text_outlines(OC_STR8("Loading commits..."));
     oc_fill();
+  } break;
+  case ACTIVE: {
+    int maxDepth = 0;
+    for (int i = 0; i < nodes.count; i++) {
+      Node *node = &nodes.nodes[i];
+      maxDepth = oc_max_i32(maxDepth, node->commit->depth);
+    }
+
+    oc_matrix_push(oc_mat2x3_translate(0, actualScroll));
+    {
+      for (int i = 0; i < nodes.count; i++) {
+        Node *node = &nodes.nodes[i];
+
+        f32 x = node->commit->track * 30;
+        f32 y = (maxDepth - node->commit->depth + 1) * 30;
+        oc_set_color_rgba(0, 0, 0, 1);
+        oc_circle_fill(x, y, 5);
+
+        f32 fontSize = 18;
+        oc_move_to(x + 15, y + fontSize / 2 - 3); // dunno
+        oc_set_font_size(fontSize);
+        oc_text_outlines(node->commit->summary);
+        oc_fill();
+      }
+    }
+    oc_matrix_pop();
   } break;
   default:
     break;

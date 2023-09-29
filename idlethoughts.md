@@ -10,3 +10,6 @@
 - It looks like oc_str8_split doesn't correctly handle consecutive separators - we should get empty strings between them, but we don't.
     - lmao martin explicitly suppressed empty strings. don't do that!!
 - It's really hard to work with lists. Really hard. How do I just get the first element of a list? I just want the first string or whatever!
+- A crash in wasm code is not easily distinguished from a crash in the runtime. This could probably be made clearer even without a fancy debugging experience.
+- It's kinda weird how hard it is to log oc_str8's. And it's weird that the log functions use null-terminated strings...seems like it might be hard for bindings.
+- stack smol
