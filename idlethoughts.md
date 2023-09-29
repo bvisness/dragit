@@ -13,3 +13,4 @@
 - A crash in wasm code is not easily distinguished from a crash in the runtime. This could probably be made clearer even without a fancy debugging experience.
 - It's kinda weird how hard it is to log oc_str8's. And it's weird that the log functions use null-terminated strings...seems like it might be hard for bindings.
 - stack smol
+- I want to get the mouse position without tracking mouse movement...

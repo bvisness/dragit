@@ -1,6 +1,8 @@
 #pragma once
 
 #include "orca_ext.h"
+#include "util/debug.h"
+#include "util/memory.h"
 #include "util/strings.h"
 #include <orca.h>
 
@@ -129,6 +131,10 @@ typedef struct Node {
   i32 depth;
   i32 track; // bigger = further right
   bool omitted;
+
+  // Computed layout values
+  f32 x, y;
+  f32 targetX, targetY;
 } Node;
 
 typedef struct NodeList {
@@ -154,6 +160,43 @@ Node *NodeListPush(NodeList *list, Node node) {
 };
 
 void NodeListDelete(NodeList *list, i32 i) { list->nodes[i] = (Node){0}; }
+
+#define NODE_QUEUE_CAP 128
+
+typedef struct NodeQueue {
+  Node *nodes[NODE_QUEUE_CAP];
+  i32 count;
+} NodeQueue;
+
+void NodeQueueInit(NodeQueue *queue) { *queue = (NodeQueue){}; }
+
+void NodeQueuePush(NodeQueue *queue, Node *node) {
+  oc_log_info("adding node of depth %d to queue of length %d\n", node->depth,
+              queue->count);
+
+  // Check for duplicate
+  for (i32 i = 0; i < queue->count; i++) {
+    if (node == queue->nodes[i]) {
+      return;
+    }
+  }
+
+  OC_ASSERT(queue->count < NODE_QUEUE_CAP, "node queue is full");
+  queue->nodes[queue->count] = node;
+  queue->count += 1;
+}
+
+Node *NodeQueueRemove(NodeQueue *queue, i32 i) {
+  oc_log_info("removing %d from queue of length %d\n", i, queue->count);
+  OC_ASSERT(0 <= i && i < queue->count, "cannot remove from empty node queue");
+  Node *node = queue->nodes[i];
+  for (int j = i; j < queue->count - 1; j++) {
+    queue->nodes[j] = queue->nodes[j + 1];
+  }
+  queue->count -= 1;
+  queue->nodes[queue->count] = NULL;
+  return node;
+}
 
 void setNodeTrack(CommitTable *commits, Node *node, i32 track) {
   if (node->track) {
@@ -201,5 +244,62 @@ void computeNodeDepths(CommitTable *commits, Node *node, Node *parent) {
   oc_str8_list_for(node->commit->children, childHash) {
     Commit *child = CommitTableGet(commits, childHash->string);
     computeNodeDepths(commits, child->node, node);
+  }
+}
+
+// Starting at the root node, work up the tree and adjust all child nodes so
+// that nodes do not overlap.
+void fixupTracks(oc_arena *arena, CommitTable *commits, Node *root) {
+  NodeQueue *queue = oc_arena_push_type(arena, NodeQueue);
+  NodeQueuePush(queue, root);
+
+  int currentDepth = root->depth;
+  while (true) {
+    oc_log_info("current depth: %d. queue count: %d\n", currentDepth,
+                queue->count);
+    if (queue->count == 0) {
+      break;
+    }
+
+    // Adjust the tracks of all runs of nodes at the same depth. (Such runs are
+    // of omitted commits, which share the same place in the graph.)
+    for (i32 i = 0; i < queue->count; i++) {
+      Node *node = queue->nodes[i];
+      OC_ASSERT(node->depth >= currentDepth);
+
+      i32 trackAdjust = 0;
+      if (node->depth == currentDepth) {
+        // Iterate through commit's children and adjust each "set" of commits
+        // horizontally. A "set" is a run of boring commits followed by an
+        // interesting commit. (Typically there are no boring commits.)
+        oc_str8_list_for(node->commit->children, childHash) {
+          oc_str8 nextHash = childHash->string;
+          while (true) {
+            Node *child = CommitTableGet(commits, nextHash)->node;
+            child->track += trackAdjust;
+            if (child->omitted) {
+              // boring; proceed to its child
+              oc_str8_list_for(child->commit->children, it) {
+                nextHash = it->string;
+                break;
+              }
+              continue;
+            } else {
+              NodeQueuePush(queue, child);
+              break;
+            }
+
+            OC_ASSERT("u dumb");
+          }
+
+          trackAdjust += 1;
+        }
+
+        NodeQueueRemove(queue, i);
+        i -= 1; // counteract the loop increment
+      }
+    }
+
+    currentDepth += 1;
   }
 }

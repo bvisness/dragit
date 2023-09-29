@@ -5,6 +5,7 @@
 #include "graphics/graphics.h"
 #include "platform/platform_debug.h"
 #include "platform/platform_subprocess.h"
+#include "ui/input_state.h"
 #include "util/algebra.h"
 #include "util/debug.h"
 #include "util/lists.h"
@@ -64,15 +65,14 @@ ORCA_EXPORT void oc_on_init(void) {
 f32 scroll = 0;
 f32 actualScroll = 0;
 
+oc_vec2 mousePos;
+
 // ORCA_EXPORT void oc_on_mouse_down(oc_mouse_button button) { dragging = true;
 // } ORCA_EXPORT void oc_on_mouse_up(oc_mouse_button button) { dragging = false;
 // }
-// ORCA_EXPORT void oc_on_mouse_move(f32 x, f32 y, f32 deltaX, f32 deltaY) {
-//   if (dragging) {
-//     pos.x += deltaX;
-//     pos.y += deltaY;
-//   }
-// }
+ORCA_EXPORT void oc_on_mouse_move(f32 x, f32 y, f32 deltaX, f32 deltaY) {
+  mousePos = (oc_vec2){x, y};
+}
 ORCA_EXPORT void oc_on_mouse_wheel(f32 deltaX, f32 deltaY) { scroll -= deltaY; }
 
 ORCA_EXPORT void oc_on_frame_refresh(void) {
@@ -177,22 +177,12 @@ void work() {
     }
     OC_ASSERT(root);
 
-    // Sort them into tracks by leaf commits
-    oc_log_info("sorting commits into tracks\n");
-    int currentTrack = 0;
-    for (int i = 0; i < nodes.count; i++) {
-      Node *node = &nodes.nodes[i];
-      if (node->commit->children.eltCount > 0) {
-        continue;
-      }
-
-      currentTrack += 1;
-      setNodeTrack(&commits, node, currentTrack);
-    }
-
     // Starting from the root, compute "depths" for all nodes.
     oc_log_info("computing node depths\n");
     computeNodeDepths(&commits, root, NULL);
+
+    oc_log_info("adjusting node tracks\n");
+    fixupTracks(&frameArena, &commits, root);
 
     nextAppState = ACTIVE;
   } break;
@@ -226,27 +216,54 @@ void draw() {
     oc_fill();
   } break;
   case ACTIVE: {
+    oc_vec2 mousePosScrolled =
+        oc_vec2_add(mousePos, (oc_vec2){0, -actualScroll});
+
     int maxDepth = 0;
     for (int i = 0; i < nodes.count; i++) {
       Node *node = &nodes.nodes[i];
       maxDepth = oc_max_i32(maxDepth, node->depth);
     }
 
+    for (int i = 0; i < nodes.count; i++) {
+      Node *node = &nodes.nodes[i];
+      node->targetX = (node->track + 1) * 30;
+      node->targetY = (maxDepth - node->depth + 1) * 30;
+      if (node->y - 10 <= mousePosScrolled.y &&
+          mousePosScrolled.y <= node->y + 10) {
+        node->targetX += 20;
+      }
+    }
+
+    for (int i = 0; i < nodes.count; i++) {
+      Node *node = &nodes.nodes[i];
+      node->x = lerp(node->x, node->targetX, 0.2);
+      node->y = lerp(node->y, node->targetY, 0.2);
+    }
+
     oc_matrix_push(oc_mat2x3_translate(0, actualScroll));
     {
       for (int i = 0; i < nodes.count; i++) {
         Node *node = &nodes.nodes[i];
+
+        oc_set_color_rgba(0, 0, 0, 1);
+        oc_str8_list_for(node->commit->parents, parentHash) {
+          Node *parentNode = CommitTableGet(&commits, parentHash->string)->node;
+          oc_move_to(parentNode->x, parentNode->y);
+          oc_line_to(node->x, node->y);
+          oc_set_width(2);
+          oc_stroke();
+        }
+
         if (node->omitted) {
           continue;
         }
 
-        f32 x = node->track * 30;
-        f32 y = (maxDepth - node->depth + 1) * 30;
         oc_set_color_rgba(0, 0, 0, 1);
-        oc_circle_fill(x, y, 5);
+        oc_circle_fill(node->x, node->y, 5);
 
         f32 fontSize = 18;
-        oc_move_to(x + 15, y + fontSize / 2 - 3); // dunno
+        oc_move_to(node->x + 15, node->y + fontSize / 2 - 3); // dunno
         oc_set_font_size(fontSize);
         oc_text_outlines(node->commit->summary);
         oc_fill();
