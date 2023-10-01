@@ -3,12 +3,9 @@
 #include "orca_ext.h"
 
 #include "graphics/graphics.h"
-#include "platform/platform_debug.h"
 #include "platform/platform_subprocess.h"
-#include "ui/input_state.h"
 #include "util/algebra.h"
 #include "util/debug.h"
-#include "util/lists.h"
 #include "util/memory.h"
 #include "util/strings.h"
 
@@ -53,7 +50,7 @@ ORCA_EXPORT void oc_on_init(void) {
       OC_UNICODE_BASIC_LATIN, OC_UNICODE_C1_CONTROLS_AND_LATIN_1_SUPPLEMENT,
       OC_UNICODE_LATIN_EXTENDED_A, OC_UNICODE_LATIN_EXTENDED_B,
       OC_UNICODE_SPECIALS};
-  font = oc_font_create_from_path(OC_STR8("/JetBrainsMono-Regular.ttf"), 5,
+  font = oc_font_create_from_path(OC_STR8("JetBrainsMono-Regular.ttf"), 5,
                                   ranges);
 
   oc_arena_init(&appArena);

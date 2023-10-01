@@ -14,3 +14,5 @@
 - It's kinda weird how hard it is to log oc_str8's. And it's weird that the log functions use null-terminated strings...seems like it might be hard for bindings.
 - stack smol
 - I want to get the mouse position without tracking mouse movement...
+- Why does oc_str8_list_collate null-terminate the string? Seems unnecessary, although not really hurting anyone.
+- Totally trivial, but "postfix" should be called "suffix" in oc_str8_list_collate.
