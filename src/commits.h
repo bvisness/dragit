@@ -115,7 +115,7 @@ u32 murmur3(const void *key, int len, u32 h1) {
 u32 murmur3_str8(oc_str8 str) { return murmur3(str.ptr, str.len, 0); }
 
 void log_commit(Commit *commit) {
-  oc_log_info("commit %.*s\n  %.*s\n  %.*s\n", oc_str8_printf(commit->hash),
+  oc_log_info("commit %.*s\n  %.*s\n  %.*s", oc_str8_printf(commit->hash),
               oc_str8_printf(commit->authorName),
               oc_str8_printf(commit->summary));
 }
@@ -295,9 +295,9 @@ void layoutNodes(oc_arena *arena, NodeList *nodes, CommitTable *commits,
     node->depth = 0;
     node->track = 0;
   }
-  oc_log_info("computing node depths\n");
+  oc_log_info("computing node depths");
   computeNodeDepths(commits, root, NULL, setOmittedIfBoring);
-  oc_log_info("adjusting node tracks\n");
+  oc_log_info("adjusting node tracks");
   fixupTracks(arena, commits, root);
 }
 

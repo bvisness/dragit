@@ -153,14 +153,14 @@ void work() {
         }
 
         CommitTableInsert(&commits, commit);
-        // oc_log_info("stored commit:\n");
+        // oc_log_info("stored commit:");
         // log_commit(commit);
       }
     }
-    oc_log_info("stored %d commits\n", commits.count);
+    oc_log_info("stored %d commits", commits.count);
 
     // Create graph nodes for each commit
-    oc_log_info("creating graph nodes\n");
+    oc_log_info("creating graph nodes");
     NodeListInit(&appArena, &nodes, commits.count);
     for (i32 b = 0; b < HASH_NUM_BUCKETS; b++) {
       for (Commit *commit = commits.buckets[b]; commit != NULL;
