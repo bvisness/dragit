@@ -1,6 +1,7 @@
 # idle thoughts
 
 - The oc_log functions shouldn't require newlines at the end. That's weird.
+    - They don't on Mac. They seemingly do on Windows. Is this a \r\n problem?
 - WOW iterating over string lists is painful. Wow wow wow.
 - Weird that you have to init lists but not string lists.
     - Seems like the init function is there, but not exposed for some reason.
@@ -16,3 +17,4 @@
 - I want to get the mouse position without tracking mouse movement...
 - Why does oc_str8_list_collate null-terminate the string? Seems unnecessary, although not really hurting anyone.
 - Totally trivial, but "postfix" should be called "suffix" in oc_str8_list_collate.
+- Should we make more convenient containers for C devs? Like dynamic arrays for example?

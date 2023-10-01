@@ -51,8 +51,8 @@ ORCA_EXPORT void oc_on_init(void) {
       OC_UNICODE_BASIC_LATIN, OC_UNICODE_C1_CONTROLS_AND_LATIN_1_SUPPLEMENT,
       OC_UNICODE_LATIN_EXTENDED_A, OC_UNICODE_LATIN_EXTENDED_B,
       OC_UNICODE_SPECIALS};
-  font = oc_font_create_from_path(OC_STR8("JetBrainsMono-Regular.ttf"), 5,
-                                  ranges);
+  font =
+      oc_font_create_from_path(OC_STR8("JetBrainsMono-Regular.ttf"), 5, ranges);
 
   oc_arena_init(&appArena);
   oc_arena_init(&frameArena);
@@ -208,6 +208,7 @@ void work() {
 
 oc_color colorBg = (oc_color){0.95f, 0.95f, 0.95f, 1};
 oc_color colorFg = (oc_color){0, 0, 0, 1};
+oc_color colorTooltip = (oc_color){0.9f, 0.9f, 0.9f, 1};
 
 void draw() {
   oc_arena_scope scratch = oc_scratch_begin();
@@ -252,6 +253,8 @@ void draw() {
 
     oc_matrix_push(oc_mat2x3_translate(0, actualScroll));
     {
+      Node *tooltipNode = NULL;
+
       for (int i = 0; i < nodes.count; i++) {
         Node *node = &nodes.nodes[i];
 
@@ -276,7 +279,9 @@ void draw() {
           oc_circle_fill(node->x + 0, node->y, 1);
           oc_circle_fill(node->x + 3, node->y, 1);
 
-          if (mousePressed && hit_test_center_rect(mousePosScrolled, (oc_vec2){node->x, node->y}, r, r)) {
+          if (mousePressed &&
+              hit_test_center_rect(mousePosScrolled,
+                                   (oc_vec2){node->x, node->y}, r, r)) {
             nodeSetOmitted(node, false);
             needLayout = true;
           }
@@ -286,17 +291,45 @@ void draw() {
           oc_set_color(colorFg);
           oc_circle_fill(node->x, node->y, r);
 
-          f32 fontSize = 18;
-          oc_move_to(node->x + 15, node->y + fontSize / 2 - 3); // dunno
-          oc_set_font_size(fontSize);
-          oc_text_outlines(node->commit->summary);
-          oc_fill();
+          if (hit_test_center_rect(mousePosScrolled,
+                                   (oc_vec2){node->x, node->y}, 10, 10)) {
+            tooltipNode = node;
+          }
 
-          if (mousePressed && hit_test_center_rect(mousePosScrolled, (oc_vec2){node->x, node->y}, r, r)) {
+          if (mousePressed &&
+              hit_test_center_rect(mousePosScrolled,
+                                   (oc_vec2){node->x, node->y}, r, r)) {
             nodeSetOmitted(node, true);
             needLayout = true;
           }
         }
+      }
+
+      if (tooltipNode) {
+        Node *n = tooltipNode;
+
+        f32 offset = 20;
+        f32 padding = 5;
+
+        f32 fontSize = 18;
+        oc_text_metrics metrics =
+            oc_font_text_metrics(font, fontSize, n->commit->summary);
+        oc_set_color(colorTooltip);
+        oc_rectangle_fill(n->x + offset, n->y - metrics.logical.h / 2,
+                          metrics.logical.w + padding * 2, metrics.logical.h);
+
+        oc_set_color(colorFg);
+        oc_set_width(2);
+        oc_move_to(n->x, n->y);
+        oc_line_to(n->x + offset, n->y);
+        oc_move_to(n->x + offset, n->y - metrics.logical.h / 2);
+        oc_line_to(n->x + offset, n->y + metrics.logical.h / 2);
+        oc_stroke();
+
+        oc_move_to(n->x + offset + padding, n->y + metrics.logical.h / 4);
+        oc_set_font_size(fontSize);
+        oc_text_outlines(n->commit->summary);
+        oc_fill();
       }
     }
     oc_matrix_pop();
