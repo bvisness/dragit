@@ -131,6 +131,8 @@ typedef struct Node {
   i32 depth;
   i32 track; // bigger = further right
   i32 trackOffsetFromParent;
+
+  bool boring;
   bool omitted;
 
   // Computed layout values
@@ -172,9 +174,6 @@ typedef struct NodeQueue {
 void NodeQueueInit(NodeQueue *queue) { *queue = (NodeQueue){}; }
 
 void NodeQueuePush(NodeQueue *queue, Node *node) {
-  oc_log_info("adding node of depth %d to queue of length %d\n", node->depth,
-              queue->count);
-
   // Check for duplicate
   for (i32 i = 0; i < queue->count; i++) {
     if (node == queue->nodes[i]) {
@@ -188,7 +187,6 @@ void NodeQueuePush(NodeQueue *queue, Node *node) {
 }
 
 Node *NodeQueueRemove(NodeQueue *queue, i32 i) {
-  oc_log_info("removing %d from queue of length %d\n", i, queue->count);
   OC_ASSERT(0 <= i && i < queue->count, "cannot remove from empty node queue");
   Node *node = queue->nodes[i];
   for (int j = i; j < queue->count - 1; j++) {
@@ -202,14 +200,13 @@ Node *NodeQueueRemove(NodeQueue *queue, i32 i) {
 // Desired outcome:
 // - Root node is depth 1
 // - Recurse to all node children.
-// - If a commit has one child and one parent, omit it from the graph.
-//    - Except, if the commit participated in a merge, it should not be omitted.
+// - If a commit has one child and one parent, it is boring.
+//    - Except, if the commit participated in a merge, it is not boring.
+// - Boring commits will be omitted by default on startup.
 // - Runs of omitted commits have the same depth.
 // - Every commit has depth > all its parents.
 void computeNodeDepths(CommitTable *commits, Node *node, Node *parent,
-                       bool setOmitted) {
-  bool isBoring = node->commit->parents.eltCount == 1 &&
-                  node->commit->children.eltCount == 1;
+                       bool setOmittedIfBoring) {
   bool isMerged = false;
   oc_str8_list_for(node->commit->children, childHash) {
     Commit *child = CommitTableGet(commits, childHash->string);
@@ -218,8 +215,12 @@ void computeNodeDepths(CommitTable *commits, Node *node, Node *parent,
       isMerged = true;
     }
   }
-  if (setOmitted) {
-    node->omitted = isBoring && !isMerged;
+  bool isBoring = node->commit->parents.eltCount == 1 &&
+                  node->commit->children.eltCount == 1 && !isMerged;
+
+  node->boring = isBoring;
+  if (isBoring && setOmittedIfBoring) {
+    node->omitted = true;
   }
 
   i32 newDepth = 1;
@@ -235,7 +236,7 @@ void computeNodeDepths(CommitTable *commits, Node *node, Node *parent,
 
   oc_str8_list_for(node->commit->children, childHash) {
     Commit *child = CommitTableGet(commits, childHash->string);
-    computeNodeDepths(commits, child->node, node, setOmitted);
+    computeNodeDepths(commits, child->node, node, setOmittedIfBoring);
   }
 }
 
@@ -248,8 +249,6 @@ void fixupTracks(oc_arena *arena, CommitTable *commits, Node *root) {
 
   int currentDepth = root->depth;
   while (true) {
-    oc_log_info("current depth: %d. queue count: %d\n", currentDepth,
-                queue->count);
     if (queue->count == 0) {
       break;
     }
@@ -290,13 +289,23 @@ void fixupTracks(oc_arena *arena, CommitTable *commits, Node *root) {
 }
 
 void layoutNodes(oc_arena *arena, NodeList *nodes, CommitTable *commits,
-                 Node *root, bool setOmitted) {
+                 Node *root, bool setOmittedIfBoring) {
   for (int i = 0; i < nodes->count; i++) {
     Node *node = &nodes->nodes[i];
+    node->depth = 0;
     node->track = 0;
   }
   oc_log_info("computing node depths\n");
-  computeNodeDepths(commits, root, NULL, setOmitted);
+  computeNodeDepths(commits, root, NULL, setOmittedIfBoring);
   oc_log_info("adjusting node tracks\n");
   fixupTracks(arena, commits, root);
+}
+
+void nodeSetOmitted(Node* node, bool omitted) {
+  if (node->boring) {
+    node->omitted = omitted;
+  } else {
+    // Interesting nodes cannot be omitted
+    node->omitted = false;
+  }
 }

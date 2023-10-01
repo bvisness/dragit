@@ -4,6 +4,7 @@
 
 #include "graphics/graphics.h"
 #include "platform/platform_subprocess.h"
+#include "util.h"
 #include "util/algebra.h"
 #include "util/debug.h"
 #include "util/memory.h"
@@ -275,22 +276,26 @@ void draw() {
           oc_circle_fill(node->x + 0, node->y, 1);
           oc_circle_fill(node->x + 3, node->y, 1);
 
-          if (mousePressed && node->x - r <= mousePosScrolled.x &&
-              mousePosScrolled.x <= node->x + r &&
-              node->y - r <= mousePosScrolled.y &&
-              mousePosScrolled.y <= node->y + r) {
-            node->omitted = false;
+          if (mousePressed && hit_test_center_rect(mousePosScrolled, (oc_vec2){node->x, node->y}, r, r)) {
+            nodeSetOmitted(node, false);
             needLayout = true;
           }
         } else {
+          f32 r = 5;
+
           oc_set_color(colorFg);
-          oc_circle_fill(node->x, node->y, 5);
+          oc_circle_fill(node->x, node->y, r);
 
           f32 fontSize = 18;
           oc_move_to(node->x + 15, node->y + fontSize / 2 - 3); // dunno
           oc_set_font_size(fontSize);
           oc_text_outlines(node->commit->summary);
           oc_fill();
+
+          if (mousePressed && hit_test_center_rect(mousePosScrolled, (oc_vec2){node->x, node->y}, r, r)) {
+            nodeSetOmitted(node, true);
+            needLayout = true;
+          }
         }
       }
     }
